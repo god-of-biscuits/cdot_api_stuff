@@ -9,10 +9,11 @@ import logging                #for logging
 
 __author__ = 'Geoff Sutton <gesutton@cisco.com>'
 
+app_dir = '/auto/smt/bin/cdot_api_lib2'
 
 #configure some logging
 #TODO: Configure logging outside of code. 
-logfile = './logs/cdot_api.log'              
+logfile = '{0}/logs/cdot_api.log'.format(app_dir)              
 logging.basicConfig(filename=logfile, 
                     level=logging.DEBUG,
                     format='%(asctime)s %(message)s'
@@ -40,10 +41,16 @@ class cdot_cluster_mgmt(object):
       self.cluster = cluster 
       self.server = NaServer(cluster, 1, 31)
       self.server.set_server_type("FILER")
-      self.server.set_transport_type("HTTPS")
-      self.server.set_port("443")
-      self.server.set_style("LOGIN")
-      self.server.set_admin_user("admin", auth2)
+      if (cluster == "sjc5-netapp-tst"):
+         self.server.set_transport_type("HTTP")
+         self.server.set_port("80")
+         self.server.set_style("LOGIN")
+         self.server.set_admin_user("admin", "cisco123")
+      else:
+         self.server.set_transport_type("HTTPS")
+         self.server.set_port("443")
+         self.server.set_style("LOGIN")
+         self.server.set_admin_user("admin", auth2)
    
 
    def get_all_volumes(self, vserver): 
@@ -55,11 +62,9 @@ class cdot_cluster_mgmt(object):
 
       xi = NaElement("desired-attributes")
       api.child_add(xi)
- 
 
       xi1 = NaElement("volume-attributes")
       xi.child_add(xi1)
-
 
       xi2 = NaElement("volume-id-attributes")
       xi1.child_add(xi2)
@@ -71,10 +76,8 @@ class cdot_cluster_mgmt(object):
       xi3 = NaElement("query")
       api.child_add(xi3)
 
-
       xi4 = NaElement("volume-attributes")
       xi3.child_add(xi4)
-
 
       xi5 = NaElement("volume-id-attributes")
       xi4.child_add(xi5)
@@ -84,14 +87,10 @@ class cdot_cluster_mgmt(object):
       volumes = self.server.invoke_elem(api)
 
       if (volumes.results_status() == 'failed'):
-         #print ("error:\n")
-         #print (volumes.sprintf())
          logging.error(volumes.sprintf())
          sys.exit (1)
 
-
       out_list = []
-
 
       output = volumes.child_get("attributes-list")
       output_nl1_children = output.children_get()
@@ -134,8 +133,6 @@ class cdot_cluster_mgmt(object):
       volumes_with_tracking_quotas = self.server.invoke_elem(api)
 
       if (volumes_with_tracking_quotas.results_status() == "failed"):
-         #print ("error:\n")
-         #print (volumes_with_tracking_quotas.sprintf())
          logging.error(volumes_with_tracking_quotas.sprintf())
          sys.exit(1)
 
@@ -195,10 +192,8 @@ class cdot_cluster_mgmt(object):
       elif (quota_type is 'qtree'):
          self.check_qtrees_for_volume(volume, qtree)
          logging.debug("quota-target: {0}".format(quota_target))
-
      
       logging.debug("policy: {0}".format(policy))
-
       
       error_handling.check_string(soft_disk_limit)
       logging.debug("soft-disk-limit: {0}".format(soft_disk_limit))
@@ -231,9 +226,7 @@ class cdot_cluster_mgmt(object):
       else:
          logging.info("Quota for {0} applied successfully".format(volume))
 
-
    def check_for_vserver(self, vserver):
-   
       """checks for vserver against list of vservers
       input: vserver/SVM 
       output: true/false"""
@@ -241,7 +234,6 @@ class cdot_cluster_mgmt(object):
       vserver_list = self.get_vservers() 
 
    def get_vservers(self):
-   
       """produces a list of vservers/SVMs for a given cluster
       output: list of vservers"""
 
@@ -249,7 +241,6 @@ class cdot_cluster_mgmt(object):
 
       xi = NaElement("desired-attributes")
       api.child_add(xi)
-
 
       xi1 = NaElement("vserver-info")
       xi.child_add(xi1)
@@ -259,7 +250,6 @@ class cdot_cluster_mgmt(object):
 
       xi2 = NaElement("query")
       api.child_add(xi2)
-
 
       xi3 = NaElement("vserver-info")
       xi2.child_add(xi3)
@@ -284,11 +274,9 @@ class cdot_cluster_mgmt(object):
       return (out_list)
 
    def check_volume(self, volume, vserver):
-
       """checks if volume exists on vserver/VSM
       input: volume name,vserver/SVM   
       output: volume doesn't exist on vserver if failure"""
-
 
       volume_list = self.get_all_volumes(vserver)
       if not (volume in volume_list):
@@ -296,7 +284,6 @@ class cdot_cluster_mgmt(object):
          sys.exit(os.EX_CONFIG)
 
    def get_qtrees_for_volume(self, volume):
-
       """gets list of qtrees for a given volume
       input: volume name 
       output: list of volumes"""
@@ -322,35 +309,36 @@ class cdot_cluster_mgmt(object):
 
       qtrees = self.server.invoke_elem(api)
 
-      if (qtrees.results_status() == "failed"):
+      output = qtrees.child_get("num-records")
+      
+      if (qtrees.results_status() == "failed") or (qtrees.child_get_int('num-records') == 0):
          logging.error(qtrees.sprintf())
-         sys.exit (1) 
+      else:
+         out_list = []
+         output = qtrees.child_get("attributes-list")
+         output_nl1_children = output.children_get()
 
-      out_list = []
-      output = qtrees.child_get("attributes-list")
-      output_nl1_children = output.children_get()
+         for output_nl1_child in output_nl1_children:
+            qtree_name = output_nl1_child.child_get_string("qtree")
+            out_list.append (qtree_name)
 
-      for output_nl1_child in output_nl1_children:
-         qtree_name = output_nl1_child.child_get_string("qtree")
-         out_list.append (qtree_name)
-
-      return (out_list)
+         return (out_list)
 
    def check_qtrees_for_volume(self, volume, qtree):
-
       """checks for a qtree with in a volume
       input: volume name
              qtree to check for
       output: <qtree_name> doesn't exist in volume <vol_name> (if failure)""" 
 
       qtree_list = self.get_qtrees_for_volume(volume)
-      if not (qtree in qtree_list) and (qtree != '-'):
-         logging.error("{0} doesn't exist in volume {1}".format(qtree,volume))
-         sys.exit(os.EX_CONFIG)
-
+      if qtree_list is None:
+         logging.debug("No qtrees for volume {0}".format(volume))
+      else:
+         if not (qtree in qtree_list) and (qtree != '-'):
+            logging.error("{0} doesn't exist in volume {1}".format(qtree,volume))
+            sys.exit(os.EX_CONFIG)
 
    def quota_off(self, vserver, volume):
-
       """turns quotas off for a given volume
       input: vserver/SVM name 
              volume name
@@ -369,9 +357,7 @@ class cdot_cluster_mgmt(object):
       else:
          logging.info("Quota turned off for {0}".format(volume))
 
-
    def quota_on(self, vserver, volume):
-
       """turns quotas on for a given volume
       input: vserver/SVM name
              volume name 
@@ -388,3 +374,66 @@ class cdot_cluster_mgmt(object):
          logging.error(quota_on.sprintf())
       else:
          logging.error("Quota turned on for {0}".format(volume))
+
+
+   def get_quotas(self, cluster, vserver):
+      
+      api = NaElement("quota-list-entries-iter")
+      
+      xi = NaElement("desired-attributes")
+      api.child_add(xi)
+
+      xi1 = NaElement("quota-entry")
+      xi.child_add(xi1)
+
+      xi1.child_add_string("volume","<volume>")
+      xi1.child_add_string("quota-target","<quota-target>")
+      xi1.child_add_string("disk-limit","<disk-limit>")
+      xi1.child_add_string("file-limit","<file-limit>")
+      xi1.child_add_string("perform-user-mapping","<perform-user-mapping>")
+      xi1.child_add_string("qtree","<qtree>")
+      xi1.child_add_string("type","<type>")
+      xi1.child_add_string("soft-disk-limit","<soft-disk-limit>")
+      xi1.child_add_string("soft-file-limit","<soft-file-limit>")
+      xi1.child_add_string("threshold","<threshold>")
+
+      api.child_add_string("max-records","10000")
+
+      xi2 = NaElement("query")
+      api.child_add(xi2)
+
+      xi3 = NaElement("quota-entry")
+      xi2.child_add(xi3)
+      
+      if (field == "target"):
+         xi3.child_add_string("quota-target",search)
+      xi3.child_add_string("quota-type","user")
+      xi3.child_add_string("vserver",vserver)
+      
+      volumes_with_malformed_quotas = self.server.invoke_elem(api)
+
+      if (volumes_with_malformed_quotas.results_status() == "failed"):
+         logging.error(volumes_with_malformed_quotas.sprintf())
+         sys.exit(1)
+
+      output = volumes_with_malformed_quotas.child_get("attributes-list")
+      output_nl1_children = output.children_get()
+      
+      quotas= {}
+
+      for output_nl1_child in output_nl1_children:
+         volume_name = output_nl1_child.child_get_string("volume")
+         quota_target = output_nl1_child.child_get_string("quota-target")
+         disk_limit = output_nl1_child.child_get_string("disk-limit")
+         file_limit = output_nl1_child.child_get_string("file-limit")
+         user_mapping = output_nl1_child.child_get_string("perform-user-mapping")
+         qtree = output_nl1_child.child_get_string("qtree")
+         soft_disk_limit = output_nl1_child.child_get_string("soft-disk-limit")
+         soft_file_limit = output_nl1_child.child_get_string("soft-file-limit")
+         threshold = output_nl1_child.child_get_string("threshold") 
+
+         quotas[volume_name] = [quota_target, disk_limit, file_limit, user_mapping, qtree, soft_disk_limit, soft_file_limit, threshold]
+
+      return quotas
+
+
