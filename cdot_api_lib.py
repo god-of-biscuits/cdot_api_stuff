@@ -41,16 +41,10 @@ class cdot_cluster_mgmt(object):
       self.cluster = cluster 
       self.server = NaServer(cluster, 1, 31)
       self.server.set_server_type("FILER")
-      if (cluster == "sjc5-netapp-tst"):
-         self.server.set_transport_type("HTTP")
-         self.server.set_port("80")
-         self.server.set_style("LOGIN")
-         self.server.set_admin_user("admin", "cisco123")
-      else:
-         self.server.set_transport_type("HTTPS")
-         self.server.set_port("443")
-         self.server.set_style("LOGIN")
-         self.server.set_admin_user("admin", auth2)
+      self.server.set_transport_type("HTTPS")
+      self.server.set_port("443")
+      self.server.set_style("LOGIN")
+      self.server.set_admin_user("admin", auth2)
    
 
    def get_all_volumes(self, vserver): 
@@ -373,10 +367,25 @@ class cdot_cluster_mgmt(object):
       if (quota_on.results_status() == "failed"):
          logging.error(quota_on.sprintf())
       else:
-         logging.error("Quota turned on for {0}".format(volume))
+         logging.info("Quota turned on for {0}".format(volume))
 
 
-   def get_quotas(self, cluster, vserver):
+   def get_quotas(self, query):
+      """gets quotas for a CDOT cluster based on search terms built into a hash
+      input: query build on a paired list 
+      you can specify the following:
+      vserver
+      volume
+      quota-target(user name/qtree name
+      disk-limit(disk space)
+      file-limit(inodes)
+      quota-type(user/tree)
+      
+      examples:
+      get_quotas([('volume','doppler*')])  
+      get_quotas([('quota-target','gesutton')])  
+      get_quotas([('vserver','sjc5b-netapp-vm'),('quota-target','gesutton')])
+      output: hash with quota rules."""
       
       api = NaElement("quota-list-entries-iter")
       
@@ -386,13 +395,14 @@ class cdot_cluster_mgmt(object):
       xi1 = NaElement("quota-entry")
       xi.child_add(xi1)
 
+      xi1.child_add_string("vserver","<vserver>")
       xi1.child_add_string("volume","<volume>")
       xi1.child_add_string("quota-target","<quota-target>")
       xi1.child_add_string("disk-limit","<disk-limit>")
       xi1.child_add_string("file-limit","<file-limit>")
       xi1.child_add_string("perform-user-mapping","<perform-user-mapping>")
       xi1.child_add_string("qtree","<qtree>")
-      xi1.child_add_string("type","<type>")
+      xi1.child_add_string("quota-type","<quota-type>")
       xi1.child_add_string("soft-disk-limit","<soft-disk-limit>")
       xi1.child_add_string("soft-file-limit","<soft-file-limit>")
       xi1.child_add_string("threshold","<threshold>")
@@ -405,35 +415,73 @@ class cdot_cluster_mgmt(object):
       xi3 = NaElement("quota-entry")
       xi2.child_add(xi3)
       
-      if (field == "target"):
-         xi3.child_add_string("quota-target",search)
-      xi3.child_add_string("quota-type","user")
-      xi3.child_add_string("vserver",vserver)
-      
-      volumes_with_malformed_quotas = self.server.invoke_elem(api)
+      query_dict = dict(query)
 
-      if (volumes_with_malformed_quotas.results_status() == "failed"):
-         logging.error(volumes_with_malformed_quotas.sprintf())
+      for field, term in query_dict.iteritems():
+         xi3.child_add_string("{0}".format(field),"{0}".format(term))
+
+      quota_out = self.server.invoke_elem(api)
+
+      if (quota_out.results_status() == "failed"):
+         logging.error(quota_out.sprintf())
          sys.exit(1)
 
-      output = volumes_with_malformed_quotas.child_get("attributes-list")
-      output_nl1_children = output.children_get()
+      output = quota_out.child_get("attributes-list")
+
       
+      output_nl1_children = output.children_get()
+     
+      quota_id = 0 
       quotas= {}
 
       for output_nl1_child in output_nl1_children:
+         vserver = output_nl1_child.child_get_string("vserver")
          volume_name = output_nl1_child.child_get_string("volume")
          quota_target = output_nl1_child.child_get_string("quota-target")
          disk_limit = output_nl1_child.child_get_string("disk-limit")
          file_limit = output_nl1_child.child_get_string("file-limit")
          user_mapping = output_nl1_child.child_get_string("perform-user-mapping")
          qtree = output_nl1_child.child_get_string("qtree")
+         quota_type = output_nl1_child.child_get_string("quota-type")
          soft_disk_limit = output_nl1_child.child_get_string("soft-disk-limit")
          soft_file_limit = output_nl1_child.child_get_string("soft-file-limit")
-         threshold = output_nl1_child.child_get_string("threshold") 
-
-         quotas[volume_name] = [quota_target, disk_limit, file_limit, user_mapping, qtree, soft_disk_limit, soft_file_limit, threshold]
+         threshold = output_nl1_child.child_get_string("threshold")
+         
+         quotas[quota_id] = [volume_name, vserver, disk_limit, file_limit, user_mapping, qtree, quota_type, quota_target, soft_disk_limit, soft_file_limit, threshold]
+         
+         quota_id +=1
 
       return quotas
 
+   def get_malformed_quotas(self):
+      """uses get_quotas to produce a list of quota rules with more than one target (username) specified 
+      input:none
+      output: a hash of quota rules with more than one target(username)"""
+      return self.get_quotas([('quota-target','*","*')])
 
+   def delete_quota(self, vserver, policy, qtree, quota_target, quota_type, volume):
+      """deletes a quota rule 
+      input: 
+      vserver
+      policy (usually default)
+      qtree (should be set to '*' if no qtree specified)
+      quota_target (username)
+      quota_type(tree/user)
+      volume
+      output: will log a succeed message or the ouput from ontapi if it fails""" 
+      self.server.set_vserver(vserver)
+
+      api = NaElement("quota-delete-entry")
+      api.child_add_string("policy",policy)
+      api.child_add_string("qtree",qtree)
+      api.child_add_string("quota-target",quota_target)
+      api.child_add_string("quota-type",quota_type)
+      api.child_add_string("volume",volume)
+
+      delete_quota_out = self.server.invoke_elem(api)
+
+      if (delete_quota_out.results_status() == "failed"):
+         logging.error(delete_quota_out.sprintf())
+         sys.exit(1)
+      else:
+         logging.info ("Quota for {0} deleted for volume {1}".format(quota_target,volume))
